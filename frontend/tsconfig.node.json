@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo",
+<<<<<<< HEAD
     "target": "ES2023",
+=======
+    "target": "ES2022",
+>>>>>>> fafb721 (fresh frontend)
     "lib": ["ES2023"],
     "module": "ESNext",
     "skipLibCheck": true,

@@ -29,6 +29,7 @@ const userSchema = new Schema({
                     default:null,
                     enum:['google','github','spotify','microsoft','facebook']
                 },
+<<<<<<< HEAD
                 accessToken:{
                     type:String,
                     default:null,
@@ -41,6 +42,8 @@ const userSchema = new Schema({
                     type:[String],
                     default:[]
                 },
+=======
+>>>>>>> fafb721 (fresh frontend)
                 sub:{
                     type: String,
                     default:null,

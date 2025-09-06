@@ -4,6 +4,7 @@ import { uploadToVectorDB } from "./quad.service.js";
 import { connectVectorDB, initializeCollection } from "./connectVectorDB.js";
 import IORedis from "ioredis";
 import { connectDB } from "./connectDB.js";
+<<<<<<< HEAD
 import express from "express";
 import dotenv from "dotenv" ;
 dotenv.config()
@@ -11,6 +12,12 @@ dotenv.config()
 
 // Initialize connections
 connectDB(); //commented for testing
+=======
+
+
+// Initialize connections
+connectDB();
+>>>>>>> fafb721 (fresh frontend)
 connectRedis();
 
 const connection = new IORedis(
@@ -27,6 +34,7 @@ const connection = new IORedis(
 
 // Initialize collection on startup
 await connectVectorDB();
+<<<<<<< HEAD
 await initializeCollection().catch(console.error);
 
 // Create queue instance
@@ -78,3 +86,9 @@ vectorWorker.on("failed",(job,err)=>{
 
 
 export { vectorQueue , vectorWorker }
+=======
+initializeCollection().catch(console.error);
+
+// Create queue instance
+const vectorQueue = new Queue("vector-queue", { connection });
+>>>>>>> fafb721 (fresh frontend)

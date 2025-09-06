@@ -3,7 +3,11 @@ export let Image;
 export const connectDB = async () => {
   try {
     const connectionInstance = await mongoose.connect(
+<<<<<<< HEAD
       `${process.env.MONGODB_URI}/users`
+=======
+      `${process.env.MONGODB_URI}/subdomains`
+>>>>>>> fafb721 (fresh frontend)
     );
     Image = await connectionInstance.connection.db.collection("images");
     console.log(

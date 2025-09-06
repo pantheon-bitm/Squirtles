@@ -5,6 +5,7 @@ import numpy as np
 from typing import List
 import uvicorn
 import os
+<<<<<<< HEAD
 
 import requests
 import uuid
@@ -15,6 +16,11 @@ app = FastAPI(title="Text Embedding Service - Gemini Alternative", version="1.0.
 NODE_QUEUE_URL = "http://localhost:3000/api/queue"
 
 
+=======
+# Initialize FastAPI app
+app = FastAPI(title="Text Embedding Service - Gemini Alternative", version="1.0.0")
+
+>>>>>>> fafb721 (fresh frontend)
 # Load the high-quality e5-large-v2 model for better semantic similarity
 try:
     # Using e5-large-v2 which is excellent for semantic similarity
@@ -51,6 +57,7 @@ def preprocess_text_for_e5(text: str, task_type: str = "query") -> str:
         return f"passage: {text}"
     else:
         return text
+<<<<<<< HEAD
     
 def send_to_node_queue(embedding: List[float], text: str, source: str = "fastapi-service"):
     """
@@ -77,6 +84,8 @@ def send_to_node_queue(embedding: List[float], text: str, source: str = "fastapi
 
 
 
+=======
+>>>>>>> fafb721 (fresh frontend)
 
 @app.post("/", response_model=EmbeddingResponse)
 async def embed_text(request: TextRequest):
@@ -102,6 +111,12 @@ async def embed_text(request: TextRequest):
             normalize_embeddings=True,
             show_progress_bar=False
         )
+<<<<<<< HEAD
+=======
+        
+       
+        
+>>>>>>> fafb721 (fresh frontend)
         return EmbeddingResponse(
             embedding=embedding.tolist(),
             dimension=len(embedding)
@@ -169,6 +184,7 @@ async def root():
         "features": ["normalized_embeddings", "batch_processing", "semantic_similarity"]
     }
 
+<<<<<<< HEAD
 
 
 
@@ -196,6 +212,8 @@ async def embed_and_index(request: TextRequest):
     return {"success": True, "dimension": len(embedding_list)}
 
 
+=======
+>>>>>>> fafb721 (fresh frontend)
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
