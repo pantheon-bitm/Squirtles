@@ -4,9 +4,6 @@ import { uploadToVectorDB } from "./quad.service.js";
 import { connectVectorDB, initializeCollection } from "./connectVectorDB.js";
 import IORedis from "ioredis";
 import { connectDB } from "./connectDB.js";
-import express from "express";
-import dotenv from "dotenv" ;
-dotenv.config()
 
 
 // Initialize connections
@@ -75,6 +72,3 @@ vectorWorker.on("failed",(job,err)=>{
 
 //Express Server 
 
-
-
-export { vectorQueue , vectorWorker }

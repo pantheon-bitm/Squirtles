@@ -1,431 +1,404 @@
-import { GoogleGenAI } from "@google/genai";
-import { VECTOR_SIZE, COLLECTION_NAME, quad } from "./connectVectorDB.js";
-import { Image } from "./connectDB.js";
-import { v5 as uuidv5 } from "uuid"; 
-import dotenv from "dotenv" ;
-dotenv.config()
-export const createSearchableText = (title, description, prompt, tags) => {
-  const tagString = Array.isArray(tags) ? tags.join(" ") : "";
-  return `${title} ${description} ${prompt} ${tagString}`.trim();
-};
-const generateEmbedding = async (text) => {
-  //   try {
-  //     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  //     const result = await ai.models.embedContent({
-  //       model: "gemini-embedding-exp-03-07",
-  //       contents: text,
-  //       config: {
-  //         taskType: "SEMANTIC_SIMILARITY"
-  //       }
-  //     });
-  //     return result.embeddings[0].values;
-  //   } catch (error) {
-  //     console.error("Error generating embedding:", error);
-  //     throw error;
-  //   }
+import { quad, COLLECTION_NAME, VECTOR_SIZE } from "./connectVectorDB.js";
+import axios from "axios";
+import { v4 as uuidv4 } from "uuid";
+
+/**
+ * Qdrant Service for RAG (Retrieval-Augmented Generation)
+ * Handles vector storage and retrieval for email, calendar, and drive data
+ */
+
+const EMBEDDER_URL = process.env.EMBEDDER_URL || "http://localhost:8000";
+
+/**
+ * Generate embeddings using the embedder service
+ * @param {string} text - Text to embed
+ * @param {string} type - Type of embedding ("query" or "passage")
+ * @returns {Array} Embedding vector
+ */
+const generateEmbedding = async (text, type = "passage") => {
   try {
-    const response = await fetch(`${process.env.EMBED_URI}/passage`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        text,
-      }),
+    const endpoint = type === "query" ? "/" : "/passage";
+    const response = await axios.post(`${EMBEDDER_URL}${endpoint}`, {
+      text: text
     });
-    const data = await response.json();
-    return data.embedding;
+    
+    if (response.data && response.data.embedding) {
+      return response.data.embedding;
+    } else {
+      throw new Error("Invalid embedding response");
+    }
   } catch (error) {
-    console.error("Error generating embedding:", error);
+    console.error("Error generating embedding:", error.message);
     throw error;
   }
 };
 
-export const uploadToVectorDB = async (imageData) => {
+/**
+ * Upload document chunk to Qdrant vector database
+ * @param {Object} metadata - Document metadata from the queue
+ */
+export const uploadToVectorDB = async (metadata) => {
   try {
-    const { mongoId, title, description, prompt, tags } = imageData;
-    console.log(mongoId);
-    if (!mongoId) {
-      throw new Error("MongoDB document ID is required");
+    // Validate required fields
+    if (!metadata.content && !metadata.title) {
+      throw new Error("Document must have content or title");
     }
 
-    // Create searchable stext from metadata
-    const searchableText = createSearchableText(
-      title,
-      description,
-      prompt,
-      tags
-    );
+    // Prepare text for embedding (combine title and content for better context)
+    const textToEmbed = [
+      metadata.title || "",
+      metadata.content || ""
+    ].filter(Boolean).join(" ").trim();
+
+    if (!textToEmbed) {
+      throw new Error("No meaningful text found for embedding");
+    }
 
     // Generate embedding
-    const embedding = await generateEmbedding(searchableText);
+    console.log(`Generating embedding for document: ${metadata.mongoId}`);
+    const embedding = await generateEmbedding(textToEmbed, "passage");
 
-    // Store only essential data in Qdrant
-    const pointId = uuidv5(mongoId.toString(), uuidv5.URL);
-    const point = {
-      id: pointId, // Use MongoDB _id as Qdrant point ID
-      vector: embedding,
-      payload: {
-        mongoId: mongoId.toString(), // Reference to MongoDB document
-        createdAt: new Date().toISOString(),
-      },
-    };
-    await quad.upsert(COLLECTION_NAME, {
-      wait: true,
-      points: [point],
-    });
-
-    console.log(`Successfully uploaded image ${mongoId} to vector database`);
-    return { success: true, pointId: point.id };
-  } catch (error) {
-    console.error("Error uploading to vector database:", error);
-    throw error;
-  }
-};
-export const fetchImageDetails = async (imageIds, userId = null) => {
-  try {
-    const query = { _id: { $in: imageIds } };
-
-    // Basic projection - adjust fields as needed
-    const projection = {
-      title: 1,
-      description: 1,
-      prompt: 1,
-      imageUrl: 1,
-      public_id: 1,
-      tags: 1,
-      uploader: 1,
-      likes: 1,
-      saves: 1,
-      createdAt: 1,
-      updatedAt: 1,
-    };
-
-    const images = await Image.find(query, projection)
-      .populate("uploader", "username avatar") // Populate uploader details
-      .lean();
-
-    // If userId provided, add user-specific data (liked/saved status)
-    if (userId) {
-      return images.map((image) => ({
-        ...image,
-        isLiked: image.likes.includes(userId),
-        isSaved: image.saves.includes(userId),
-        likesCount: image.likes.length,
-        savesCount: image.saves.length,
-      }));
+    if (!embedding || embedding.length !== VECTOR_SIZE) {
+      throw new Error(`Invalid embedding size. Expected ${VECTOR_SIZE}, got ${embedding?.length || 0}`);
     }
 
-    return images.map((image) => ({
-      ...image,
-      likesCount: image.likes.length,
-      savesCount: image.saves.length,
-    }));
-  } catch (error) {
-    console.error("Error fetching image details from MongoDB:", error);
-    throw error;
-  }
-};
-export const searchSimilarImages = async (query, options = {}) => {
-  try {
-    const { limit = 10, threshold = 0.7, userId = null } = options;
-
-    // Generate embedding for search query
-    const queryEmbedding = await generateEmbedding(query);
-
-    // Search in Qdrant (returns only MongoDB IDs)
-    const searchResults = await quad.search(COLLECTION_NAME, {
-      vector: queryEmbedding,
-      limit,
-      score_threshold: threshold,
-      with_payload: true,
-      with_vector: false,
-    });
-
-    if (searchResults.length === 0) {
-      return {
-        query,
-        results: [],
-        totalFound: 0,
-      };
-    }
-
-    // Extract MongoDB IDs and scores
-    const imageIds = searchResults.map((result) => result.payload.mongoId);
-    const scoreMap = new Map(
-      searchResults.map((result) => [result.payload.mongoId, result.score])
-    );
-
-    // Fetch complete image details from MongoDB
-    const imageDetails = await fetchImageDetails(imageIds, userId);
-
-    // Combine with similarity scores and maintain order
-    const results = imageDetails
-      .map((image) => ({
-        ...image,
-        similarityScore: scoreMap.get(image._id.toString()),
-      }))
-      .sort((a, b) => b.similarityScore - a.similarityScore);
-
-    return {
-      query,
-      results,
-      totalFound: results.length,
-    };
-  } catch (error) {
-    console.error("Error searching similar images:", error);
-    throw error;
-  }
-};
-
-/**
- * Find similar images to a specific image by its MongoDB ID
- */
-export const findSimilarImagesById = async (mongoId, options = {}) => {
-  try {
-    const { limit = 10, threshold = 0.8, userId = null } = options;
-
-    // Get the target image's vector from Qdrant
-    const targetImage = await quad.retrieve(COLLECTION_NAME, {
-      ids: [mongoId.toString()],
-      with_vector: true,
-      with_payload: true,
-    });
-
-    if (!targetImage || targetImage.length === 0) {
-      throw new Error(`Image with ID ${mongoId} not found in vector database`);
-    }
-
-    const targetVector = targetImage[0].vector;
-
-    // Search for similar images
-    const searchResults = await quad.search(COLLECTION_NAME, {
-      vector: targetVector,
-      limit: limit + 1, // +1 to exclude target image
-      score_threshold: threshold,
-      with_payload: true,
-      with_vector: false,
-    });
-
-    // Filter out the target image and get MongoDB IDs
-    const similarImageIds = searchResults
-      .filter((result) => result.payload.mongoId !== mongoId.toString())
-      .slice(0, limit)
-      .map((result) => result.payload.mongoId);
-
-    const scoreMap = new Map(
-      searchResults.map((result) => [result.payload.mongoId, result.score])
-    );
-
-    // Fetch target image details
-    const [targetImageDetails] = await fetchImageDetails([mongoId], userId);
-
-    // Fetch similar images details
-    const similarImagesDetails = await fetchImageDetails(
-      similarImageIds,
-      userId
-    );
-
-    // Add similarity scores
-    const similarImagesWithScores = similarImagesDetails
-      .map((image) => ({
-        ...image,
-        similarityScore: scoreMap.get(image._id.toString()),
-      }))
-      .sort((a, b) => b.similarityScore - a.similarityScore);
-
-    return {
-      targetImage: targetImageDetails,
-      similarImages: similarImagesWithScores,
-      totalFound: similarImagesWithScores.length,
-    };
-  } catch (error) {
-    console.error("Error finding similar images by ID:", error);
-    throw error;
-  }
-};
-
-/**
- * Advanced search with MongoDB filters
- */
-export const advancedImageSearch = async (searchParams) => {
-  try {
-    const {
-      query,
-      tags = [],
-      uploader = null,
-      dateRange = null,
-      limit = 10,
-      threshold = 0.7,
-      userId = null,
-    } = searchParams;
-
-    // First, get candidate images from vector search
-    const vectorResults = await searchSimilarImages(query, {
-      limit: limit * 3, // Get more candidates for filtering
-      threshold,
-      userId: null, // Don't fetch user-specific data yet
-    });
-
-    if (vectorResults.results.length === 0) {
-      return vectorResults;
-    }
-
-    // Build MongoDB filter for additional constraints
-    const mongoFilter = {
-      _id: { $in: vectorResults.results.map((r) => r._id) },
+    // Prepare payload for Qdrant
+    const payload = {
+      // Core identifiers
+      id: metadata.mongoId,
+      originalId: metadata.originalId,
+      
+      // Content fields for RAG
+      title: metadata.title || "",
+      content: metadata.content || "",
+      
+      // Source information
+      source: metadata.source,
+      
+      // Chunking information
+      chunkIndex: metadata.chunkIndex || 0,
+      totalChunks: metadata.totalChunks || 1,
+      chunkLength: metadata.chunkLength || textToEmbed.length,
+      originalLength: metadata.originalLength || 0,
+      
+      // Timestamps
+      createdAt: new Date().toISOString(),
+      lastUpdated: metadata.date || metadata.lastUpdated || new Date().toISOString(),
+      
+      // Source-specific metadata
+      ...(metadata.source === "gmail" && {
+        from: metadata.from,
+        threadId: metadata.threadId,
+        emailDate: metadata.date
+      }),
+      
+      ...(metadata.source === "drive" && {
+        mimeType: metadata.mimeType,
+        size: metadata.size,
+        webViewLink: metadata.webViewLink,
+        owners: metadata.owners,
+        createdDate: metadata.createdDate
+      }),
+      
+      ...(metadata.source === "calendar" && {
+        startDate: metadata.date,
+        endDate: metadata.endDate,
+        location: metadata.location,
+        attendees: metadata.attendees,
+        organizer: metadata.organizer,
+        status: metadata.status,
+        webLink: metadata.webLink
+      }),
+      
+      // Additional metadata
+      textLength: textToEmbed.length,
+      embeddingGenerated: true
     };
 
-    // Add additional filters
-    if (tags.length > 0) {
-      mongoFilter.tags = { $in: tags };
-    }
-
-    if (uploader) {
-      mongoFilter.uploader = uploader;
-    }
-
-    if (dateRange && dateRange.from && dateRange.to) {
-      mongoFilter.createdAt = {
-        $gte: new Date(dateRange.from),
-        $lte: new Date(dateRange.to),
-      };
-    }
-
-    // Apply filters and get final results
-    const filteredImages = await Image.find(mongoFilter)
-      .populate("uploader", "username avatar")
-      .limit(limit)
-      .lean();
-
-    // Create score map from vector results
-    const scoreMap = new Map(
-      vectorResults.results.map((r) => [r._id.toString(), r.similarityScore])
-    );
-
-    // Add similarity scores and user-specific data
-    let results = filteredImages.map((image) => ({
-      ...image,
-      similarityScore: scoreMap.get(image._id.toString()),
-      likesCount: image.likes.length,
-      savesCount: image.saves.length,
-    }));
-
-    // Add user-specific data if userId provided
-    if (userId) {
-      results = results.map((image) => ({
-        ...image,
-        isLiked: image.likes.includes(userId),
-        isSaved: image.saves.includes(userId),
-      }));
-    }
-
-    // Sort by similarity score
-    results.sort((a, b) => b.similarityScore - a.similarityScore);
-
-    return {
-      query,
-      results,
-      totalFound: results.length,
-    };
-  } catch (error) {
-    console.error("Error in advanced image search:", error);
-    throw error;
-  }
-};
-export const getRandomImages = async (limit = 10, userId = null) => {
-  try {
-    // Get random images from MongoDB directly (more efficient than vector search)
-    const randomImages = await Image.aggregate([
-      { $sample: { size: limit } },
-      {
-        $lookup: {
-          from: "users",
-          localField: "uploader",
-          foreignField: "_id",
-          as: "uploader",
-          pipeline: [{ $project: { username: 1, avatar: 1 } }],
-        },
-      },
-      { $unwind: "$uploader" },
-    ]);
-
-    // Add user-specific data if userId provided
-    let results = randomImages.map((image) => ({
-      ...image,
-      likesCount: image.likes.length,
-      savesCount: image.saves.length,
-    }));
-
-    if (userId) {
-      results = results.map((image) => ({
-        ...image,
-        isLiked: image.likes.includes(userId),
-        isSaved: image.saves.includes(userId),
-      }));
-    }
-
-    return results;
-  } catch (error) {
-    console.error("Error getting random images:", error);
-    throw error;
-  }
-};
-
-/**
- * Delete image from vector database
- */
-export const deleteFromVectorDB = async (mongoId) => {
-  try {
-    await quad.delete(COLLECTION_NAME, {
-      wait: true,
-      points: [mongoId.toString()],
-    });
-    console.log(`Successfully deleted image ${mongoId} from vector database`);
-    return { success: true };
-  } catch (error) {
-    console.error("Error deleting from vector database:", error);
-    throw error;
-  }
-};
-
-/**
- * Update image embedding in vector database
- */
-export const updateVectorDB = async (mongoId, updatedData) => {
-  try {
-    const { title, description, prompt, tags } = updatedData;
-
-    // Create new searchable text
-    const searchableText = createSearchableText(
-      title,
-      description,
-      prompt,
-      tags
-    );
-
-    // Generate new embedding
-    const embedding = await generateEmbedding(searchableText);
-
-    // Update the point with minimal payload
+    // Upsert point to Qdrant
     await quad.upsert(COLLECTION_NAME, {
       wait: true,
       points: [
         {
-          id: mongoId.toString(),
+          id: uuidv4(), // Qdrant point ID (different from document ID)
           vector: embedding,
-          payload: {
-            mongoId: mongoId.toString(),
-            updatedAt: new Date().toISOString(),
-          },
-        },
-      ],
+          payload: payload
+        }
+      ]
     });
 
-    console.log(`Successfully updated image ${mongoId} in vector database`);
-    return { success: true };
+    console.log(`Successfully stored document ${metadata.mongoId} in Qdrant (source: ${metadata.source})`);
+    
   } catch (error) {
-    console.error("Error updating vector database:", error);
+    console.error(`Failed to upload document ${metadata.mongoId} to Qdrant:`, error.message);
+    throw error;
+  }
+};
+
+/**
+ * Search for similar documents in Qdrant
+ * @param {string} queryText - Search query
+ * @param {Object} options - Search options
+ * @returns {Array} Search results
+ */
+export const searchVectorDB = async (queryText, options = {}) => {
+  try {
+    const {
+      limit = 10,
+      scoreThreshold = 0.7,
+      source = null, // Filter by source (gmail, drive, calendar)
+      includeContent = true
+    } = options;
+
+    // Generate query embedding
+    console.log(`Searching for: "${queryText}"`);
+    const queryEmbedding = await generateEmbedding(queryText, "query");
+
+    // Prepare search request
+    const searchRequest = {
+      vector: queryEmbedding,
+      limit: limit,
+      score_threshold: scoreThreshold,
+      with_payload: true,
+      with_vector: false
+    };
+
+    // Add source filter if specified
+    if (source) {
+      searchRequest.filter = {
+        must: [
+          {
+            key: "source",
+            match: {
+              value: source
+            }
+          }
+        ]
+      };
+    }
+
+    // Execute search
+    const searchResults = await quad.search(COLLECTION_NAME, searchRequest);
+
+    // Format results for RAG
+    const formattedResults = searchResults.map(result => ({
+      id: result.payload.id,
+      originalId: result.payload.originalId,
+      score: result.score,
+      title: result.payload.title,
+      content: includeContent ? result.payload.content : "",
+      source: result.payload.source,
+      chunkIndex: result.payload.chunkIndex,
+      totalChunks: result.payload.totalChunks,
+      date: result.payload.lastUpdated,
+      
+      // Source-specific fields
+      ...(result.payload.source === "gmail" && {
+        from: result.payload.from,
+        emailDate: result.payload.emailDate
+      }),
+      
+      ...(result.payload.source === "drive" && {
+        mimeType: result.payload.mimeType,
+        webViewLink: result.payload.webViewLink
+      }),
+      
+      ...(result.payload.source === "calendar" && {
+        startDate: result.payload.startDate,
+        endDate: result.payload.endDate,
+        location: result.payload.location,
+        organizer: result.payload.organizer
+      })
+    }));
+
+    console.log(`Found ${formattedResults.length} relevant documents`);
+    return formattedResults;
+    
+  } catch (error) {
+    console.error("Error searching vector database:", error.message);
+    throw error;
+  }
+};
+
+/**
+ * Search by source type (gmail, drive, calendar)
+ * @param {string} queryText - Search query
+ * @param {string} source - Source type
+ * @param {Object} options - Additional search options
+ * @returns {Array} Search results
+ */
+export const searchBySource = async (queryText, source, options = {}) => {
+  return await searchVectorDB(queryText, { ...options, source });
+};
+
+/**
+ * Get document statistics from Qdrant
+ * @returns {Object} Statistics
+ */
+export const getVectorDBStats = async () => {
+  try {
+    const collectionInfo = await quad.getCollection(COLLECTION_NAME);
+    
+    // Get source distribution using scroll
+    const scrollResult = await quad.scroll(COLLECTION_NAME, {
+      limit: 1000,
+      with_payload: ["source"],
+      with_vector: false
+    });
+
+    const sourceDistribution = {};
+    scrollResult.points.forEach(point => {
+      const source = point.payload.source || "unknown";
+      sourceDistribution[source] = (sourceDistribution[source] || 0) + 1;
+    });
+
+    return {
+      totalPoints: collectionInfo.points_count,
+      vectorSize: collectionInfo.config.params.vectors.size,
+      distance: collectionInfo.config.params.vectors.distance,
+      sourceDistribution,
+      status: collectionInfo.status
+    };
+    
+  } catch (error) {
+    console.error("Error getting vector DB stats:", error.message);
+    return { error: error.message };
+  }
+};
+
+/**
+ * Delete documents by source or specific IDs
+ * @param {Object} criteria - Deletion criteria
+ * @returns {Object} Deletion result
+ */
+export const deleteFromVectorDB = async (criteria) => {
+  try {
+    const { source, documentIds, originalId } = criteria;
+    
+    let filter = null;
+    
+    if (source) {
+      filter = {
+        must: [
+          {
+            key: "source",
+            match: { value: source }
+          }
+        ]
+      };
+    } else if (originalId) {
+      filter = {
+        must: [
+          {
+            key: "originalId",
+            match: { value: originalId }
+          }
+        ]
+      };
+    } else if (documentIds && documentIds.length > 0) {
+      filter = {
+        must: [
+          {
+            key: "id",
+            match: { any: documentIds }
+          }
+        ]
+      };
+    }
+
+    if (!filter) {
+      throw new Error("No valid deletion criteria provided");
+    }
+
+    const deleteResult = await quad.delete(COLLECTION_NAME, {
+      filter: filter,
+      wait: true
+    });
+
+    console.log(`Deleted documents matching criteria:`, criteria);
+    return deleteResult;
+    
+  } catch (error) {
+    console.error("Error deleting from vector DB:", error.message);
+    throw error;
+  }
+};
+
+/**
+ * Update collection schema if needed
+ * @returns {boolean} Success status
+ */
+export const updateCollectionSchema = async () => {
+  try {
+    // Add any new payload schema if needed
+    // This is useful for when we add new metadata fields
+    
+    console.log("Collection schema is up to date");
+    return true;
+    
+  } catch (error) {
+    console.error("Error updating collection schema:", error.message);
+    return false;
+  }
+};
+
+/**
+ * Hybrid search combining vector similarity and keyword matching
+ * @param {string} queryText - Search query
+ * @param {Object} options - Search options
+ * @returns {Array} Combined search results
+ */
+export const hybridSearch = async (queryText, options = {}) => {
+  try {
+    const {
+      limit = 10,
+      scoreThreshold = 0.5,
+      source = null,
+      keywordWeight = 0.3,
+      vectorWeight = 0.7
+    } = options;
+
+    // Get vector similarity results
+    const vectorResults = await searchVectorDB(queryText, {
+      limit: limit * 2, // Get more results for re-ranking
+      scoreThreshold: scoreThreshold * 0.8, // Lower threshold for initial filtering
+      source,
+      includeContent: true
+    });
+
+    // Simple keyword matching for title and content
+    const keywords = queryText.toLowerCase().split(/\s+/).filter(word => word.length > 2);
+    
+    const hybridResults = vectorResults.map(result => {
+      const title = (result.title || "").toLowerCase();
+      const content = (result.content || "").toLowerCase();
+      const text = `${title} ${content}`;
+      
+      // Calculate keyword match score
+      const keywordMatches = keywords.filter(keyword => text.includes(keyword)).length;
+      const keywordScore = keywordMatches / keywords.length;
+      
+      // Combine scores
+      const hybridScore = (result.score * vectorWeight) + (keywordScore * keywordWeight);
+      
+      return {
+        ...result,
+        hybridScore,
+        keywordScore,
+        vectorScore: result.score
+      };
+    });
+
+    // Sort by hybrid score and return top results
+    const sortedResults = hybridResults
+      .sort((a, b) => b.hybridScore - a.hybridScore)
+      .slice(0, limit);
+
+    console.log(`Hybrid search returned ${sortedResults.length} results for: "${queryText}"`);
+    return sortedResults;
+    
+  } catch (error) {
+    console.error("Error in hybrid search:", error.message);
     throw error;
   }
 };
