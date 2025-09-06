@@ -1,0 +1,15 @@
+{
+  "language": "JavaScript",
+  "features": {
+    "oauth": true,
+    "webauthn": false
+  },
+  "attribution": {
+    "package": "simple-auth-cli",
+    "version": "1.0.14",
+    "license": "MIT",
+    "author": "Cosmology is fun!"
+  },
+  "timestamp": "2025-09-06T05:53:32.637Z",
+  "template": "oauth"
+}
