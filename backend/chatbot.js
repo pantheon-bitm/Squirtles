@@ -1,31 +1,9 @@
-import express from "express";
-import dotenv from "dotenv";
-import { MongoClient } from "mongodb";
-import fetch from "node-fetch";
 
-dotenv.config();
-
-const app = express();
-app.use(express.json());
-
-
-const MONGO_URI = process.env.MONGO_URI;
 const DB_NAME = "vector-search";
 const COLLECTION = "embeddings";   //
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY; // put in .env
 const VECTOR_DB = "http://localhost:6333"; // Qdrant default, adjust if 
 
-let mongoClient;
-
-//connect mongo 
-
-async function connectMongo(){
-    mongoClient = new MongoClient(MONGO_URI);
-    await mongoClient.connect();
-    console.log("Connected to MongoDB");
-}
-
-//search in vector db
 
 async function searchEmbeddings(query,topK = 3) {
     //generate embedding for the query
