@@ -29,7 +29,7 @@ import {
     connector, 
     getGmailOnly, 
     getDriveOnly, 
-    getCalendarOnly 
+    getCalendarOnly,
 } from '../webhooks/integrations.js';
 import { verifyJWTOPT } from '../middlewares/auth.opt.middleware.js';
 
@@ -65,5 +65,6 @@ router.route("/connect").get(verifyJWT,connector)
 router.route("/connect/gmail").get(verifyJWT, getGmailOnly)
 router.route("/connect/drive").get(verifyJWT, getDriveOnly)
 router.route("/connect/calendar").get(verifyJWT, getCalendarOnly)
+
 
 export default router
