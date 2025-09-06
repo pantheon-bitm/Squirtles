@@ -3,7 +3,7 @@ let quad;
 const connectVectorDB = async () => {
   try {
     quad = new QdrantClient({
-      url: process.env.QDRANT_URI,
+      url: process.env.QDRANT_URL,
       apiKey: process.env.QDRANT_API_KEY,
     });
     console.log("vector db connected!!!!!");

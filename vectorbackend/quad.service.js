@@ -1,7 +1,9 @@
 import { GoogleGenAI } from "@google/genai";
 import { VECTOR_SIZE, COLLECTION_NAME, quad } from "./connectVectorDB.js";
 import { Image } from "./connectDB.js";
-import { v5 as uuidv5 } from "uuid";
+import { v5 as uuidv5 } from "uuid"; 
+import dotenv from "dotenv" ;
+dotenv.config()
 export const createSearchableText = (title, description, prompt, tags) => {
   const tagString = Array.isArray(tags) ? tags.join(" ") : "";
   return `${title} ${description} ${prompt} ${tagString}`.trim();
@@ -47,7 +49,7 @@ export const uploadToVectorDB = async (imageData) => {
       throw new Error("MongoDB document ID is required");
     }
 
-    // Create searchable text from metadata
+    // Create searchable stext from metadata
     const searchableText = createSearchableText(
       title,
       description,

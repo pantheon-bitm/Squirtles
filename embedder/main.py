@@ -5,8 +5,15 @@ import numpy as np
 from typing import List
 import uvicorn
 import os
+
+import requests
+import uuid
+
 # Initialize FastAPI app
 app = FastAPI(title="Text Embedding Service - Gemini Alternative", version="1.0.0")
+
+NODE_QUEUE_URL = "http://localhost:3000/api/queue"
+
 
 # Load the high-quality e5-large-v2 model for better semantic similarity
 try:
@@ -44,6 +51,32 @@ def preprocess_text_for_e5(text: str, task_type: str = "query") -> str:
         return f"passage: {text}"
     else:
         return text
+    
+def send_to_node_queue(embedding: List[float], text: str, source: str = "fastapi-service"):
+    """
+    Forward embeddings + metadata to Node.js queue API.
+    """
+    metadata = {
+        "id": str(uuid.uuid4()),   # unique ID for the chunk
+        "chunk": text,
+        "source": source
+    }
+
+    payload = {
+        "embeddings": embedding,
+        "metadata": metadata
+    }
+
+    try:
+        res = requests.post(NODE_QUEUE_URL, json=payload)
+        res.raise_for_status()
+        print(f" Sent chunk {metadata['id']} to Node.js queue")
+    except Exception as e:
+        print(f" Failed to send to Node.js queue: {e}")
+
+
+
+
 
 @app.post("/", response_model=EmbeddingResponse)
 async def embed_text(request: TextRequest):
@@ -69,9 +102,6 @@ async def embed_text(request: TextRequest):
             normalize_embeddings=True,
             show_progress_bar=False
         )
-        
-       
-        
         return EmbeddingResponse(
             embedding=embedding.tolist(),
             dimension=len(embedding)
@@ -138,6 +168,33 @@ async def root():
         "model": "Semantic similarity optimized",
         "features": ["normalized_embeddings", "batch_processing", "semantic_similarity"]
     }
+
+
+
+
+@app.post("/index")
+async def embed_and_index(request: TextRequest):
+    if model is None:
+        raise HTTPException(status_code=500, detail="Model not loaded")
+    
+    text = request.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Text cannot be empty")
+
+    processed_text = preprocess_text_for_e5(text, "passage")
+    embedding = model.encode(
+        processed_text,
+        convert_to_numpy=True,
+        normalize_embeddings=True,
+        show_progress_bar=False
+    )
+    embedding_list = embedding.tolist()
+
+    # Sending to Node.js queue
+    send_to_node_queue(embedding_list, text)
+
+    return {"success": True, "dimension": len(embedding_list)}
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
