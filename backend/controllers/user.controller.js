@@ -340,92 +340,126 @@ const getUserDetails=asyncHandler(async(req,res)=>{
 })
 //o-auth controllers
 const registerOauthUser=asyncHandler(async(req,res)=>{
-    const redirectUri=registerUserRedirectUri(req.query.provider,req.query.integration)
+    const redirectUri=await registerUserRedirectUri(req.query.provider,req.query.integration,req.user?._id)
     if(redirectUri==undefined){
         throw new apiError(400,"Invalid provider")
     }
 res.redirect(redirectUri)
 })
 const handleGoogleOauthCallback = async (req, res) => {
-    const { code } = req.query;
-  
-    if (code) {
-        try {
-            const tokenParams = {
-                code: code,
-                redirect_uri: "http://localhost:3000/api/v1/users/auth/oauth/google/callback",
-            };
-            
-  
-            // Ensure the 'client' is properly initialized
-            const client = new AuthorizationCode(GoogleClient);
-  
-            const accessToken = await client.getToken(tokenParams);
-  
-            if (accessToken.token) {
-                console.log("here is your token",accessToken.token);
-                const userData=await fetch(`https://www.googleapis.com/oauth2/v3/userinfo?access_token=${accessToken.token.access_token}`);
-                const userFromGoogle=await userData.json();
-                const existingUser=await User.findOne({email:userFromGoogle.email});
-                if(existingUser){
-                    const existingProvider = existingUser.oauth.providers.find(provider => provider.providerName === "google");
-                    if(!existingProvider){
-                        existingUser.oauth.providers.push({
-                            providerName:"google",
-                            sub:userFromGoogle.sub
-                        });
-                        await existingUser.save({validateBeforeSave:false});
-                    }
-                    const {accessToken,refreshToken}= await generateAccessTokenAndRefreshToken(existingUser);
-                    res.cookie('accessToken',accessToken,cookieOptions)
-                    .cookie('refreshToken',refreshToken,cookieOptions)
-                    .redirect(302,`${APPURL}?status=${encodeURIComponent("User logged in successfully")}`);
-                    
-                }
-                else{
-                    const user=await User.create({
-                    username:userFromGoogle.name,
-                    email:userFromGoogle.email,
-                    avatar:userFromGoogle.picture,
-                    isVerified:userFromGoogle.email_verified,
-                    oauth:{
-                        providers:{
-                            providerName:"google",
-                            sub:userFromGoogle.sub
-                        }
-                    },
-                    password:123456,
-                    verificationToken:null,
-                    verificationTokenExpiryDate:null
-                    });
-                    const createdUser=await User.findByIdAndUpdate(user._id,{
-                        $unset:{
-                            password:1,
-                        }
-                    }).select('-password -refreshToken');
-                    if(!createdUser){
-                        throw new apiError(500,"User not created something went wrong while registering the user")
-                    }
-                    
-                    const {accessToken,refreshToken}= await generateAccessTokenAndRefreshToken(user);
-                   
-                    return res.status(200)
-                    .cookie("accessToken",accessToken,cookieOptions)
-                    .cookie("refreshToken",refreshToken,cookieOptions)
-                    .redirect(302,`${APPURL}?status=${encodeURIComponent("User registered successfully")}`)
-                }
-            } else {
-                throw new Error('Token not returned from Google API');
+  const { code } = req.query;
+
+  if (code) {
+    try {
+      const tokenParams = {
+        code: code,
+        redirect_uri: `http://localhost:3000/api/v1/users/auth/oauth/google/callback`,
+      };
+
+      // Ensure the 'client' is properly initialized
+      const client = new AuthorizationCode(GoogleClient);
+
+      const accessToken = await client.getToken(tokenParams);
+
+      if (accessToken.token) {
+        const userData = await fetch(
+          `https://www.googleapis.com/oauth2/v3/userinfo?access_token=${accessToken.token.access_token}`
+        );
+        const userFromGoogle = await userData.json();
+        const existingUser = await User.findOne({
+          email: userFromGoogle.email,
+        });
+        const token=accessToken.token.access_token;
+         const scopesData=await fetch(`https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=${token}`)
+            const scopes=await scopesData.json();
+            if(!scopes.scope){
+                throw new apiError(400,"Failed to fetch user scopes")
             }
-        } catch (error) {
-            console.error("Error during token retrieval:", error); 
-            res.status(500).json({ message: 'Authentication failed', error: error.message });
+        if (existingUser) {
+          const existingProvider = existingUser.oauth.providers.find(
+            (provider) => provider.providerName === "google"
+          );
+          if (!existingProvider) {
+            existingUser.oauth.providers.push({
+              providerName: "google",
+                accessToken:token,
+                scopes:scopes.scope.split(' '),
+              sub: userFromGoogle.sub,
+            });
+            await existingUser.save({ validateBeforeSave: false });
+          }
+          else{
+            existingProvider.scopes.push(...scopes.scope.split(' '));
+            existingProvider.accessToken=token;
+            await existingProvider.save({validateBeforeSave:false});
+          }
+          const { accessToken, refreshToken } =
+            await generateAccessTokenAndRefreshToken(existingUser);
+          res
+            .cookie("accessToken", accessToken, cookieOptions)
+            .cookie("refreshToken", refreshToken, cookieOptions)
+            .redirect(
+              302,
+              `${APPURL}/auth?status=${encodeURIComponent("User logged in successfully")}`
+            );
+        } else {
+           
+          const user = await User.create({
+            username: userFromGoogle.name,
+            fullName: userFromGoogle.name,
+            email: userFromGoogle.email,
+            avatar: userFromGoogle.picture,
+            isVerified: userFromGoogle.email_verified,
+            oauth: {
+              providers: {
+                providerName: "google",
+                accessToken:token,
+                scopes:scopes.scope.split(' '),
+                sub: userFromGoogle.sub,
+              },
+            },
+            password: 123456,
+            verificationToken: null,
+            verificationTokenExpiryDate: null,
+          });
+          const createdUser = await User.findByIdAndUpdate(user._id, {
+            $unset: {
+              password: 1,
+            },
+          }).select("-password -refreshToken");
+          if (!createdUser) {
+            throw new apiError(
+              500,
+              "User not created something went wrong while registering the user"
+            );
+          }
+
+          const { accessToken, refreshToken } =
+            await generateAccessTokenAndRefreshToken(user);
+
+          return res
+            .status(200)
+            .cookie("accessToken", accessToken, cookieOptions)
+            .cookie("refreshToken", refreshToken, cookieOptions)
+            .redirect(
+              302,
+              `${APPURL}/auth?status=${encodeURIComponent("User registered successfully")}`
+            );
         }
-    } else {
-        console.log("No authorization code provided");
-        res.status(400).json('Authorization code not provided');
+      } else {
+        throw new Error("Token not returned from Google API");
+      }
+    } catch (error) {
+      console.error("Error during token retrieval:", error);
+      res
+        .status(500)
+        .json({ message: "Authentication failed", error: error.message });
     }
+  } else {
+    console.log("No authorization code provided");
+    res.status(400).json("Authorization code not provided");
   }
+};
 const handleGithubOauthCallback = async (req, res) => {
     const { code } = req.query;
   

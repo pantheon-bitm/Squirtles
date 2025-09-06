@@ -29,6 +29,18 @@ const userSchema = new Schema({
                     default:null,
                     enum:['google','github','spotify','microsoft','facebook']
                 },
+                accessToken:{
+                    type:String,
+                    default:null,
+                },
+                refreshToken:{
+                    type:String,
+                    default:null,
+                },
+                scopes:{
+                    type:[String],
+                    default:[]
+                },
                 sub:{
                     type: String,
                     default:null,
