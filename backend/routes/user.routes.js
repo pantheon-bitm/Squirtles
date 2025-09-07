@@ -47,7 +47,7 @@ router.route("/auth/oauth/microsoft/callback").get(handleMicrosoftOauthCallback)
 router.route("/auth/oauth/slack/callback").get(handleSlackOauthCallback);
 
 //secured routes
-router.route("/logout").post(verifyJWT,logoutUser)
+router.route("/logout").get(verifyJWT,logoutUser)
 router.route("/verify").post(verifyJWT,verifyUser)
 router.route("/forgotPassword").get(verifyJWT,forgotPassword)
 router.route("/changePassword").post(verifyJWT, changePassword)
